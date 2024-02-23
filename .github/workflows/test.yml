@@ -1,0 +1,81 @@
+name: Test
+
+on:
+  push:
+    paths-ignore:
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Restore sample files
+        id: cache-samples
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sdss/gaia_sprint/samples/sdss5db_too_test
+          key: ${{ runner.os }}-config-sdss
+
+      - name: Install Postgresql
+        uses: ikalnytskyi/action-setup-postgres@v5
+        id: postgres
+
+      - name: Install Q3C
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-server-dev-14
+          wget https://github.com/segasai/q3c/archive/refs/tags/v2.0.1.tar.gz
+          tar xvf v2.0.1.tar.gz
+          cd q3c-2.0.1
+          make
+          sudo make install
+        env:
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+
+      - name: Create database
+        run: |
+          createdb sdss5db_too_test
+          psql -c "CREATE EXTENSION q3c;" -d sdss5db_too_test
+        env:
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade wheel pip setuptools
+          pip install .
+
+      - name: Populate database
+        run: |
+          cd tests/scripts
+          python create_test_database.py
+        env:
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+
+      - name: Test with pytest
+        run: |
+          pip install pytest pytest-sugar pytest-cov coverage
+          pytest tests/
+        env:
+          PGSERVICE: ${{ steps.postgres.outputs.service-name }}
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
